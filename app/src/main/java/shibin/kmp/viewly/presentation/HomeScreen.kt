@@ -65,14 +65,14 @@ private enum class SortOption(val label: String) {
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 fun HomeScreen(
-    onDocumentSelected: (DeviceDocument) -> Unit
+    onDocumentSelected: (DeviceDocument) -> Unit,
+    viewModel: HomeViewModel = androidx.lifecycle.viewmodel.compose.viewModel()
 ) {
     val context = LocalContext.current
-    var isLoading by remember { mutableStateOf(false) }
-    val coroutineScope = rememberCoroutineScope()
+    val documentList = viewModel.documentList
+    val isLoading = viewModel.isLoading
+    val hasPermission = viewModel.hasPermission
 
-    var documentList by remember { mutableStateOf<List<DeviceDocument>>(emptyList()) }
-    var hasPermission by remember { mutableStateOf(false) }
     var searchQuery by remember { mutableStateOf("") }
     var selectedType by remember { mutableStateOf<DocumentType?>(null) }
     var sortOption by remember { mutableStateOf(SortOption.NEWEST) }
@@ -111,35 +111,12 @@ fun HomeScreen(
         }
     }
 
-    fun checkAndLoadDocuments() {
-        val granted = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            Environment.isExternalStorageManager()
-        } else {
-            true
-        }
-        hasPermission = granted
-        if (granted) {
-            isLoading = true
-            coroutineScope.launch(Dispatchers.IO) {
-                val docs = fetchDeviceDocuments(context)
-                withContext(Dispatchers.Main) {
-                    documentList = docs
-                    isLoading = false
-                }
-            }
-        }
-    }
-
-    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) {
-        checkAndLoadDocuments()
-    }
-
     DisposableEffect(hasPermission) {
         if (!hasPermission) return@DisposableEffect onDispose {}
 
         val observer = object : android.database.ContentObserver(android.os.Handler(android.os.Looper.getMainLooper())) {
             override fun onChange(selfChange: Boolean) {
-                checkAndLoadDocuments()
+                viewModel.refreshDocuments()
             }
         }
         val externalUri = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
@@ -158,8 +135,7 @@ fun HomeScreen(
     val legacyPermissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { isGranted ->
-        hasPermission = isGranted
-        if (isGranted) checkAndLoadDocuments()
+        if (isGranted) viewModel.checkAndLoadDocuments()
     }
 
     val manualPickerLauncher = rememberLauncherForActivityResult(
@@ -387,7 +363,7 @@ fun HomeScreen(
                     else -> {
                         androidx.compose.material3.pulltorefresh.PullToRefreshBox(
                             isRefreshing = isLoading,
-                            onRefresh = { checkAndLoadDocuments() },
+                            onRefresh = { viewModel.refreshDocuments() },
                             modifier = Modifier.fillMaxSize()
                         ) {
                             LazyColumn(
@@ -472,9 +448,8 @@ fun HomeScreen(
                 if (doc.uri.scheme == "file") {
                     Surface(
                         onClick = {
-                            val deleted = doc.uri.path?.let { File(it).delete() } ?: false
+                            val deleted = viewModel.deleteDocument(doc)
                             if (deleted) {
-                                documentList = documentList.filterNot { it.id == doc.id }
                                 Toast.makeText(context, "Deleted ${doc.name}", Toast.LENGTH_SHORT).show()
                             } else {
                                 Toast.makeText(context, "Unable to delete file", Toast.LENGTH_SHORT).show()
