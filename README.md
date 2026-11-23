@@ -1,6 +1,7 @@
 # Viewly
 
 Viewly is a modern, offline-first Android application built with Jetpack Compose for seamless local viewing and management of documents (`.pdf`, `.docx`, `.xlsx`, and `.pptx`). It operates 100% locally on-device with zero network access required.
+<img width="1254" height="1254" alt="viewly" src="https://github.com/user-attachments/assets/c43c225a-8d9a-4050-9448-b49e6e19f15b" />
 
 ---
 
