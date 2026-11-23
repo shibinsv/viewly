@@ -22,7 +22,8 @@ data class DeviceDocument(
     val sizeBytes: Long,
     val dateModifiedMillis: Long,
     val type: DocumentType,
-    val folderName: String = "Storage"
+    val folderName: String = "Storage",
+    val folderPath: String = "Storage"
 )
 
 private val SUPPORTED_EXTENSIONS = setOf("pdf", "doc", "docx", "xls", "xlsx", "ppt", "pptx")
@@ -91,7 +92,10 @@ fun fetchDeviceDocuments(context: Context): List<DeviceDocument> {
             val diskMillis = path?.let { File(it).takeIf { f -> f.exists() }?.lastModified() } ?: 0L
             val bestTimestamp = maxOf(modSeconds * 1000L, addSeconds * 1000L, diskMillis)
 
-            val folder = path?.let { File(it).parentFile?.name } ?: "Storage"
+            val parentFile = path?.let { File(it).parentFile }
+            val folder = parentFile?.name ?: "Storage"
+            val folderPath = parentFile?.absolutePath ?: "Storage"
+
             val contentUri = ContentUris.withAppendedId(collection, id)
             val type = detectTypeFromName(name) ?: continue
 
@@ -102,7 +106,8 @@ fun fetchDeviceDocuments(context: Context): List<DeviceDocument> {
                 sizeBytes = size,
                 dateModifiedMillis = bestTimestamp,
                 type = type,
-                folderName = folder
+                folderName = folder,
+                folderPath = folderPath
             )
         }
     }
@@ -124,6 +129,7 @@ private fun scanDirectoryRecursively(
         } else if (file.isFile && file.length() > 0L) {
             val type = detectTypeFromName(file.name) ?: continue
             val pathKey = file.absolutePath.lowercase()
+            val parentFile = file.parentFile
 
             documentsByPath[pathKey] = DeviceDocument(
                 id = file.absolutePath.hashCode().toLong(),
@@ -132,7 +138,8 @@ private fun scanDirectoryRecursively(
                 sizeBytes = file.length(),
                 dateModifiedMillis = file.lastModified(),
                 type = type,
-                folderName = file.parentFile?.name ?: "Storage"
+                folderName = parentFile?.name ?: "Storage",
+                folderPath = parentFile?.absolutePath ?: "Storage"
             )
         }
     }

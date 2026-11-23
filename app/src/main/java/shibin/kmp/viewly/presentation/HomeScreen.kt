@@ -5,7 +5,6 @@ import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.os.Build
-import android.os.Environment
 import android.provider.OpenableColumns
 import android.provider.Settings
 import android.text.format.DateUtils
@@ -14,20 +13,30 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.gestures.snapping.rememberSnapFlingBehavior
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Sort
 import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.DeleteOutline
 import androidx.compose.material.icons.filled.FolderOpen
+import androidx.compose.material.icons.filled.GridView
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Share
+import androidx.compose.material.icons.filled.Star
+import androidx.compose.material.icons.filled.ViewList
+import androidx.compose.material.icons.outlined.StarBorder
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -41,15 +50,9 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.FileProvider
-import androidx.lifecycle.Lifecycle
-import androidx.lifecycle.compose.LifecycleEventEffect
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 import shibin.kmp.viewly.R
 import shibin.kmp.viewly.domain.common.DeviceDocument
 import shibin.kmp.viewly.domain.common.DocumentType
-import shibin.kmp.viewly.domain.common.fetchDeviceDocuments
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -60,6 +63,10 @@ private enum class SortOption(val label: String) {
     OLDEST("Oldest first"),
     NAME_ASC("Name (A–Z)"),
     SIZE_DESC("Largest first")
+}
+
+private enum class DocumentViewMode {
+    LIST, GRID
 }
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
@@ -75,20 +82,23 @@ fun HomeScreen(
 
     var searchQuery by remember { mutableStateOf("") }
     var selectedType by remember { mutableStateOf<DocumentType?>(null) }
+    var showStarredOnly by remember { mutableStateOf(false) }
     var sortOption by remember { mutableStateOf(SortOption.NEWEST) }
+    var viewMode by remember { mutableStateOf(DocumentViewMode.LIST) }
     var showSortMenu by remember { mutableStateOf(false) }
 
     // Bottom sheet states
     var actionSheetDoc by remember { mutableStateOf<DeviceDocument?>(null) }
     var infoDialogDoc by remember { mutableStateOf<DeviceDocument?>(null) }
 
-    val sortedAndFilteredDocs by remember(documentList, searchQuery, selectedType, sortOption) {
+    val sortedAndFilteredDocs by remember(documentList, searchQuery, selectedType, showStarredOnly, sortOption, viewModel.starredDocIds) {
         derivedStateOf {
             val filtered = documentList.filter { doc ->
+                val matchesStarred = !showStarredOnly || viewModel.starredDocIds.contains(doc.id)
                 val matchesType = selectedType == null || doc.type == selectedType
                 val matchesQuery = doc.name.contains(searchQuery.trim(), ignoreCase = true) ||
                         doc.folderName.contains(searchQuery.trim(), ignoreCase = true)
-                matchesType && matchesQuery
+                matchesStarred && matchesType && matchesQuery
             }
 
             when (sortOption) {
@@ -96,17 +106,6 @@ fun HomeScreen(
                 SortOption.OLDEST -> filtered.sortedBy { it.dateModifiedMillis }
                 SortOption.NAME_ASC -> filtered.sortedBy { it.name.lowercase() }
                 SortOption.SIZE_DESC -> filtered.sortedByDescending { it.sizeBytes }
-            }
-        }
-    }
-
-    // Group by date only when sorted chronologically; otherwise show a single clean list
-    val groupedDocuments by remember(sortedAndFilteredDocs, sortOption) {
-        derivedStateOf {
-            if (sortOption == SortOption.NEWEST || sortOption == SortOption.OLDEST) {
-                sortedAndFilteredDocs.groupBy { formatGroupHeader(it.dateModifiedMillis) }
-            } else {
-                mapOf(sortOption.label to sortedAndFilteredDocs)
             }
         }
     }
@@ -239,8 +238,103 @@ fun HomeScreen(
                 .fillMaxSize()
                 .padding(paddingValues)
         ) {
-            if (hasPermission && documentList.isNotEmpty()) {
-// Modern Pill Search Bar + Sort Trigger
+            // Segmented Tabs: All Files vs Folders (Hidden when inside a specific folder)
+            if (viewModel.selectedFolderPath == null) {
+                PrimaryTabRow(
+                    selectedTabIndex = viewModel.currentTab.ordinal,
+                    containerColor = MaterialTheme.colorScheme.surfaceContainerLowest
+                ) {
+                    Tab(
+                        selected = viewModel.currentTab == HomeTab.ALL,
+                        onClick = {
+                            viewModel.currentTab = HomeTab.ALL
+                            viewModel.selectedFolderPath = null
+                        },
+                        text = { Text("All Files") }
+                    )
+                    Tab(
+                        selected = viewModel.currentTab == HomeTab.FOLDERS,
+                        onClick = {
+                            viewModel.currentTab = HomeTab.FOLDERS
+                            viewModel.selectedFolderPath = null
+                        },
+                        text = { Text("Folders (${viewModel.folders.size})") }
+                    )
+                }
+            } else {
+                // Clean Folder Header when inside a folder
+                Surface(
+                    color = MaterialTheme.colorScheme.surfaceContainerLowest,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 4.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        IconButton(onClick = { viewModel.selectedFolderPath = null }) {
+                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back to folders")
+                        }
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Column {
+                            Text(
+                                text = viewModel.folders.find { it.path == viewModel.selectedFolderPath }?.name ?: "Folder",
+                                style = MaterialTheme.typography.titleLarge,
+                                fontWeight = FontWeight.Bold
+                            )
+                            val count = sortedAndFilteredDocs.count { it.folderPath == viewModel.selectedFolderPath }
+                            Text(
+                                text = "$count items",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                }
+            }
+
+            if (hasPermission && viewModel.currentTab == HomeTab.ALL && viewModel.selectedFolderPath == null) {
+                // Recent & Starred Horizontal Bar with Snapping
+                val recentDocs = documentList.sortedByDescending { it.dateModifiedMillis }.take(5)
+                if (recentDocs.isNotEmpty()) {
+                    Column(modifier = Modifier.padding(vertical = 4.dp)) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 20.dp, vertical = 2.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = "Recent & Starred",
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                        }
+                        Spacer(modifier = Modifier.height(4.dp))
+                        val recentListState = rememberLazyListState()
+                        LazyRow(
+                            state = recentListState,
+                            flingBehavior = rememberSnapFlingBehavior(lazyListState = recentListState),
+                            contentPadding = PaddingValues(horizontal = 16.dp),
+                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            items(recentDocs, key = { it.id }) { doc ->
+                                RecentDocumentCard(
+                                    doc = doc,
+                                    isStarred = viewModel.starredDocIds.contains(doc.id),
+                                    onStarClick = { viewModel.toggleStar(doc.id) },
+                                    onClick = { onDocumentSelected(doc) }
+                                )
+                            }
+                        }
+                        Spacer(modifier = Modifier.height(4.dp))
+                    }
+                }
+
+// Modern Pill Search Bar + Sort & View Mode Trigger
                 TextField(
                     value = searchQuery,
                     onValueChange = { searchQuery = it },
@@ -255,6 +349,14 @@ fun HomeScreen(
                                 IconButton(onClick = { searchQuery = "" }) {
                                     Icon(Icons.Default.Clear, contentDescription = "Clear search")
                                 }
+                            }
+                            IconButton(onClick = {
+                                viewMode = if (viewMode == DocumentViewMode.LIST) DocumentViewMode.GRID else DocumentViewMode.LIST
+                            }) {
+                                Icon(
+                                    imageVector = if (viewMode == DocumentViewMode.LIST) Icons.Default.GridView else Icons.Default.ViewList,
+                                    contentDescription = "Toggle View Mode"
+                                )
                             }
                             Box {
                                 IconButton(onClick = { showSortMenu = true }) {
@@ -283,7 +385,7 @@ fun HomeScreen(
                         }
                     },
                     singleLine = true,
-                    shape = RoundedCornerShape(50),
+                    shape = RoundedCornerShape(25),
                     colors = TextFieldDefaults.colors(
                         focusedContainerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
                         unfocusedContainerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
@@ -292,26 +394,52 @@ fun HomeScreen(
                         disabledIndicatorColor = Color.Transparent
                     )
                 )
-// Color-Matched Filter Chips
+// Color-Matched Filter Chips (Including Starred Chip)
                 LazyRow(
                     contentPadding = PaddingValues(horizontal = 16.dp, vertical = 6.dp),
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     item {
                         FilterChip(
-                            selected = selectedType == null,
-                            onClick = { selectedType = null },
+                            selected = selectedType == null && !showStarredOnly,
+                            onClick = {
+                                selectedType = null
+                                showStarredOnly = false
+                            },
                             label = { Text("All (${documentList.size})") },
                             shape = RoundedCornerShape(50)
                         )
+                    }
+                    if (viewModel.starredDocIds.isNotEmpty()) {
+                        item {
+                            FilterChip(
+                                selected = showStarredOnly,
+                                onClick = { showStarredOnly = !showStarredOnly },
+                                label = { Text("Starred (${viewModel.starredDocIds.size})") },
+                                leadingIcon = {
+                                    Icon(
+                                        imageVector = Icons.Default.Star,
+                                        contentDescription = null,
+                                        tint = Color(0xFFFFC107),
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                },
+                                shape = RoundedCornerShape(50),
+                                colors = FilterChipDefaults.filterChipColors(
+                                    selectedContainerColor = Color(0xFFFFC107).copy(alpha = 0.16f),
+                                    selectedLabelColor = Color(0xFF8D6E63)
+                                )
+                            )
+                        }
                     }
                     items(DocumentType.entries) { type ->
                         val count = documentList.count { it.type == type }
                         if (count > 0) {
                             val accent = documentAccentColor(type)
                             FilterChip(
-                                selected = selectedType == type,
+                                selected = selectedType == type && !showStarredOnly,
                                 onClick = {
+                                    showStarredOnly = false
                                     selectedType = if (selectedType == type) null else type
                                 },
                                 label = { Text("${type.label} ($count)") },
@@ -325,6 +453,7 @@ fun HomeScreen(
                     }
                 }
             }
+
             Box(
                 modifier = Modifier.fillMaxSize(),
                 contentAlignment = Alignment.Center
@@ -357,43 +486,125 @@ fun HomeScreen(
                     documentList.isEmpty() -> {
                         Text("No documents found on device")
                     }
-                    groupedDocuments.isEmpty() -> {
-                        Text("No matching documents found")
+                    viewModel.currentTab == HomeTab.FOLDERS && viewModel.selectedFolderPath == null -> {
+                        LazyColumn(
+                            modifier = Modifier.fillMaxSize(),
+                            contentPadding = PaddingValues(vertical = 12.dp)
+                        ) {
+                            items(viewModel.folders, key = { it.path }) { folder ->
+                                FolderCard(
+                                    folder = folder,
+                                    onClick = { viewModel.selectedFolderPath = folder.path }
+                                )
+                            }
+                        }
                     }
                     else -> {
-                        androidx.compose.material3.pulltorefresh.PullToRefreshBox(
-                            isRefreshing = isLoading,
-                            onRefresh = { viewModel.refreshDocuments() },
-                            modifier = Modifier.fillMaxSize()
-                        ) {
-                            LazyColumn(
-                                modifier = Modifier.fillMaxSize(),
-                                contentPadding = PaddingValues(bottom = 24.dp)
-                            ) {
-                                groupedDocuments.forEach { (dateHeader, docsInGroup) ->
-                                    stickyHeader(key = dateHeader) {
-                                        Surface(
-                                            modifier = Modifier.fillMaxWidth(),
-                                            color = MaterialTheme.colorScheme.surfaceContainerLowest
-                                        ) {
-                                            Text(
-                                                text = dateHeader,
-                                                style = MaterialTheme.typography.labelLarge,
-                                                fontWeight = FontWeight.SemiBold,
-                                                color = MaterialTheme.colorScheme.primary,
-                                                modifier = Modifier.padding(
-                                                    horizontal = 20.dp,
-                                                    vertical = 8.dp
-                                                )
-                                            )
-                                        }
-                                    }
-                                    items(docsInGroup, key = { it.id }) { doc ->
-                                        DocumentCardItem(
+                        val docsToShow = if (viewModel.currentTab == HomeTab.FOLDERS && viewModel.selectedFolderPath != null) {
+                            sortedAndFilteredDocs.filter { it.folderPath == viewModel.selectedFolderPath }
+                        } else {
+                            sortedAndFilteredDocs
+                        }
+
+                        if (viewModel.currentTab == HomeTab.FOLDERS && viewModel.selectedFolderPath != null) {
+                            // Clean flat list/grid inside folders
+                            if (viewMode == DocumentViewMode.GRID) {
+                                LazyVerticalGrid(
+                                    columns = GridCells.Fixed(2),
+                                    modifier = Modifier.fillMaxSize(),
+                                    contentPadding = PaddingValues(12.dp),
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    items(docsToShow, key = { it.id }) { doc ->
+                                        DocumentGridCardItem(
                                             doc = doc,
+                                            isStarred = viewModel.starredDocIds.contains(doc.id),
+                                            onStarClick = { viewModel.toggleStar(doc.id) },
                                             onClick = { onDocumentSelected(doc) },
                                             onMoreClick = { actionSheetDoc = doc }
                                         )
+                                    }
+                                }
+                            } else {
+                                LazyColumn(
+                                    modifier = Modifier.fillMaxSize(),
+                                    contentPadding = PaddingValues(top = 8.dp, bottom = 24.dp)
+                                ) {
+                                    items(docsToShow, key = { it.id }) { doc ->
+                                        DocumentCardItem(
+                                            doc = doc,
+                                            isStarred = viewModel.starredDocIds.contains(doc.id),
+                                            onStarClick = { viewModel.toggleStar(doc.id) },
+                                            onClick = { onDocumentSelected(doc) },
+                                            onMoreClick = { actionSheetDoc = doc }
+                                        )
+                                    }
+                                }
+                            }
+                        } else {
+                            val groupedDocs = if (sortOption == SortOption.NEWEST || sortOption == SortOption.OLDEST) {
+                                docsToShow.groupBy { formatGroupHeader(it.dateModifiedMillis) }
+                            } else {
+                                mapOf(sortOption.label to docsToShow)
+                            }
+
+                            androidx.compose.material3.pulltorefresh.PullToRefreshBox(
+                                isRefreshing = isLoading,
+                                onRefresh = { viewModel.refreshDocuments() },
+                                modifier = Modifier.fillMaxSize()
+                            ) {
+                                if (viewMode == DocumentViewMode.GRID) {
+                                    LazyVerticalGrid(
+                                        columns = GridCells.Fixed(2),
+                                        modifier = Modifier.fillMaxSize(),
+                                        contentPadding = PaddingValues(12.dp),
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                                    ) {
+                                        items(docsToShow, key = { it.id }) { doc ->
+                                            DocumentGridCardItem(
+                                                doc = doc,
+                                                isStarred = viewModel.starredDocIds.contains(doc.id),
+                                                onStarClick = { viewModel.toggleStar(doc.id) },
+                                                onClick = { onDocumentSelected(doc) },
+                                                onMoreClick = { actionSheetDoc = doc }
+                                            )
+                                        }
+                                    }
+                                } else {
+                                    LazyColumn(
+                                        modifier = Modifier.fillMaxSize(),
+                                        contentPadding = PaddingValues(bottom = 24.dp)
+                                    ) {
+                                        groupedDocs.forEach { (dateHeader, docsInGroup) ->
+                                            stickyHeader(key = dateHeader) {
+                                                Surface(
+                                                    modifier = Modifier.fillMaxWidth(),
+                                                    color = MaterialTheme.colorScheme.surfaceContainerLowest
+                                                ) {
+                                                    Text(
+                                                        text = dateHeader,
+                                                        style = MaterialTheme.typography.labelLarge,
+                                                        fontWeight = FontWeight.SemiBold,
+                                                        color = MaterialTheme.colorScheme.primary,
+                                                        modifier = Modifier.padding(
+                                                            horizontal = 20.dp,
+                                                            vertical = 8.dp
+                                                        )
+                                                    )
+                                                }
+                                            }
+                                            items(docsInGroup, key = { it.id }) { doc ->
+                                                DocumentCardItem(
+                                                    doc = doc,
+                                                    isStarred = viewModel.starredDocIds.contains(doc.id),
+                                                    onStarClick = { viewModel.toggleStar(doc.id) },
+                                                    onClick = { onDocumentSelected(doc) },
+                                                    onMoreClick = { actionSheetDoc = doc }
+                                                )
+                                            }
+                                        }
                                     }
                                 }
                             }
@@ -492,9 +703,110 @@ fun HomeScreen(
         )
     }
 }
+
+@Composable
+private fun RecentDocumentCard(
+    doc: DeviceDocument,
+    isStarred: Boolean,
+    onStarClick: () -> Unit,
+    onClick: () -> Unit
+) {
+    Surface(
+        onClick = onClick,
+        shape = RoundedCornerShape(16.dp),
+        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+        modifier = Modifier
+            .width(200.dp)
+            .height(75.dp)
+    ) {
+        Column(
+            modifier = Modifier.padding(12.dp),
+            verticalArrangement = Arrangement.SpaceBetween
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                DocumentTypeBadge(type = doc.type, size = 25)
+                IconButton(
+                    onClick = onStarClick,
+                    modifier = Modifier.size(20.dp)
+                ) {
+                    Icon(
+                        imageVector = if (isStarred) Icons.Default.Star else Icons.Outlined.StarBorder,
+                        contentDescription = "Star",
+                        tint = if (isStarred) Color(0xFFFFC107) else MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(18.dp)
+                    )
+                }
+            }
+            Text(
+                text = doc.name,
+                style = MaterialTheme.typography.bodyMedium,
+                fontWeight = FontWeight.Medium,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
+    }
+}
+
+@Composable
+private fun FolderCard(
+    folder: FolderSummary,
+    onClick: () -> Unit
+) {
+    Surface(
+        onClick = onClick,
+        shape = RoundedCornerShape(16.dp),
+        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 6.dp)
+    ) {
+        Row(
+            modifier = Modifier.padding(16.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(16.dp)
+        ) {
+            Surface(
+                shape = RoundedCornerShape(12.dp),
+                color = MaterialTheme.colorScheme.primaryContainer,
+                modifier = Modifier.size(48.dp)
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    Icon(
+                        imageVector = Icons.Default.FolderOpen,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onPrimaryContainer
+                    )
+                }
+            }
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = folder.name,
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Spacer(modifier = Modifier.height(2.dp))
+                Text(
+                    text = "${folder.documentCount} documents",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+    }
+}
+
 @Composable
 private fun DocumentCardItem(
     doc: DeviceDocument,
+    isStarred: Boolean,
+    onStarClick: () -> Unit,
     onClick: () -> Unit,
     onMoreClick: () -> Unit
 ) {
@@ -531,6 +843,13 @@ private fun DocumentCardItem(
                     overflow = TextOverflow.Ellipsis
                 )
             }
+            IconButton(onClick = onStarClick) {
+                Icon(
+                    imageVector = if (isStarred) Icons.Default.Star else Icons.Outlined.StarBorder,
+                    contentDescription = "Star",
+                    tint = if (isStarred) Color(0xFFFFC107) else MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
             IconButton(onClick = onMoreClick) {
                 Icon(
                     imageVector = Icons.Default.MoreVert,
@@ -541,19 +860,94 @@ private fun DocumentCardItem(
         }
     }
 }
+
 @Composable
-private fun DocumentTypeBadge(type: DocumentType) {
+private fun DocumentGridCardItem(
+    doc: DeviceDocument,
+    isStarred: Boolean,
+    onStarClick: () -> Unit,
+    onClick: () -> Unit,
+    onMoreClick: () -> Unit
+) {
+    Surface(
+        onClick = onClick,
+        shape = RoundedCornerShape(16.dp),
+        color = MaterialTheme.colorScheme.surface,
+        tonalElevation = 1.dp,
+        shadowElevation = 0.5.dp,
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(140.dp)
+    ) {
+        Column(
+            modifier = Modifier.padding(12.dp),
+            verticalArrangement = Arrangement.SpaceBetween
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                DocumentTypeBadge(type = doc.type, size = 32)
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    IconButton(
+                        onClick = onStarClick,
+                        modifier = Modifier.size(24.dp)
+                    ) {
+                        Icon(
+                            imageVector = if (isStarred) Icons.Default.Star else Icons.Outlined.StarBorder,
+                            contentDescription = "Star",
+                            tint = if (isStarred) Color(0xFFFFC107) else MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.size(16.dp)
+                        )
+                    }
+                    IconButton(
+                        onClick = onMoreClick,
+                        modifier = Modifier.size(24.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.MoreVert,
+                            contentDescription = "More",
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.size(16.dp)
+                        )
+                    }
+                }
+            }
+            Column {
+                Text(
+                    text = doc.name,
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.Medium,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Spacer(modifier = Modifier.height(2.dp))
+                Text(
+                    text = "${formatFileSize(doc.sizeBytes)} • ${doc.folderName}",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun DocumentTypeBadge(type: DocumentType, size: Int = 45) {
     val badgeColor = documentAccentColor(type)
     Surface(
         shape = RoundedCornerShape(10.dp),
         color = badgeColor.copy(alpha = 0.14f),
-        modifier = Modifier.size(width = 48.dp, height = 42.dp)
+        modifier = Modifier.size(size.dp)
     ) {
         Box(contentAlignment = Alignment.Center) {
             Text(
                 text = type.label,
-                style = MaterialTheme.typography.labelSmall,
                 fontWeight = FontWeight.Bold,
+                fontSize = (size / 3).sp,
                 color = badgeColor
             )
         }
@@ -574,7 +968,7 @@ private fun shareSafeDocument(context: Context, doc: DeviceDocument) {
         doc.uri
     }
     val intent = Intent(Intent.ACTION_SEND).apply {
-        type = "/"
+        type = "*/*"
         putExtra(Intent.EXTRA_STREAM, shareUri)
         putExtra(Intent.EXTRA_SUBJECT, doc.name)
         addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
