@@ -1,0 +1,9 @@
+com.fauran.fileviewer.viewer-pngs-0 /Users/shibinreshma/AndroidStudioProjects/Viewly/viewer/build/generated/res/pngs/debug
+com.fauran.fileviewer.viewer-updated_navigation_xml-1 /Users/shibinreshma/AndroidStudioProjects/Viewly/viewer/build/generated/updated_navigation_xml/debug
+com.fauran.fileviewer.viewer-mergeDebugResources-2 /Users/shibinreshma/AndroidStudioProjects/Viewly/viewer/build/intermediates/incremental/debug/mergeDebugResources/merged.dir
+com.fauran.fileviewer.viewer-mergeDebugResources-3 /Users/shibinreshma/AndroidStudioProjects/Viewly/viewer/build/intermediates/incremental/debug/mergeDebugResources/stripped.dir
+com.fauran.fileviewer.viewer-debug-4 /Users/shibinreshma/AndroidStudioProjects/Viewly/viewer/build/intermediates/merged_res/debug/mergeDebugResources
+com.fauran.fileviewer.viewer-debug-5 /Users/shibinreshma/AndroidStudioProjects/Viewly/viewer/build/intermediates/packaged_res/debug/packageDebugResources
+com.fauran.fileviewer.viewer-debug-6 /Users/shibinreshma/AndroidStudioProjects/Viewly/viewer/src/debug/res
+com.fauran.fileviewer.viewer-main-7 /Users/shibinreshma/AndroidStudioProjects/Viewly/viewer/src/main/res
+gradleHome-0 /Users/shibinreshma/.gradle

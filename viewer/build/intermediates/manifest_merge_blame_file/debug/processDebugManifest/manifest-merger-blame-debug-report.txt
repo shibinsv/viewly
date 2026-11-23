@@ -1,0 +1,21 @@
+1<?xml version="1.0" encoding="utf-8"?>
+2<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+3    package="com.fauran.fileviewer.viewer" >
+4
+5    <uses-sdk android:minSdkVersion="24" />
+5-->INJECTED
+5-->INJECTED
+6
+7    <application>
+7-->/Users/shibinreshma/AndroidStudioProjects/Viewly/viewer/src/main/AndroidManifest.xml:3:5-8:19
+8        <activity
+8-->/Users/shibinreshma/AndroidStudioProjects/Viewly/viewer/src/main/AndroidManifest.xml:4:9-7:116
+9            android:name="com.fauran.fileviewer.viewer.OfficeViewerActivity"
+9-->/Users/shibinreshma/AndroidStudioProjects/Viewly/viewer/src/main/AndroidManifest.xml:5:13-49
+10            android:configChanges="orientation|screenSize|keyboardHidden|screenLayout|smallestScreenSize|uiMode"
+10-->/Users/shibinreshma/AndroidStudioProjects/Viewly/viewer/src/main/AndroidManifest.xml:7:13-113
+11            android:exported="false" />
+11-->/Users/shibinreshma/AndroidStudioProjects/Viewly/viewer/src/main/AndroidManifest.xml:6:13-37
+12    </application>
+13
+14</manifest>

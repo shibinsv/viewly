@@ -1,0 +1,173 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<style>
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #fff; }
+  #doc-container { position: absolute; inset: 0; }
+</style>
+</head>
+<body>
+<div id="doc-container"></div>
+<script type="module">
+  // office-open-xml-viewer (@silurus/ooxml) host page for Android WebView.
+  // Kotlin injects window.OfficeBridge (addJavascriptInterface) and calls
+  // window.ovDispatch({cmd:...}) for navigation. Document bytes are served
+  // same-origin by OfficeViewerView at /document/<token>/file.
+  // All three formats render as a centered scrollable page column on a gray
+  // background (xlsx adds its own tab/zoom chrome inside the container).
+  const params = new URLSearchParams(location.search);
+  const format = params.get('format');
+  const token = params.get('token');
+  const bridge = window.OfficeBridge;
+  try { console.log('viewer host page: v4 (command-name dispatch fix)'); bridge.onDebug('html v4'); } catch (e) {}
+  const container = document.getElementById('doc-container');
+  const documentUrl = location.origin + '/document/' + encodeURIComponent(token) + '/file';
+  let viewer = null;
+
+  // Diagnostics: MIUI-style ROMs swallow logcat, so mirror logs into the bridge
+  // where Kotlin can show them on screen.
+  function log(msg) {
+    try { console.log(msg); bridge.onDebug(String(msg)); } catch (e) { /* bridge absent */ }
+  }
+  window.addEventListener('error', e => log('JS error: ' + e.message + ' @' + (e.filename || '') + ':' + e.lineno));
+  window.addEventListener('unhandledrejection', e => log('unhandled rejection: ' + ((e.reason && e.reason.message) || e.reason)));
+
+  function nav(cmd) {
+    if (format === 'docx' && viewer && viewer.topVisiblePage !== undefined) {
+      const target = viewer.topVisiblePage + (cmd === 'next' ? 1 : -1);
+      return Promise.resolve(viewer.scrollToPage(target)).then(
+        () => bridge.onPageChanged(viewer.topVisiblePage + 1),
+        e => log('nav failed: ' + ((e && e.message) || e))
+      );
+    }
+    // pptx/xlsx navigate by scrolling their container.
+    return Promise.resolve();
+  }
+
+  window.ovDispatch = function (cmd) {
+    if (!viewer) { log('dispatch ignored, no viewer: ' + JSON.stringify(cmd)); return; }
+    // Kotlin sends {cmd:'name'} or {goTo: index}; normalize to the command name.
+    const name = cmd && cmd.cmd;
+    log('dispatch ' + JSON.stringify(cmd));
+    try {
+      if (name === 'next' || name === 'prev') nav(name);
+      else if (name === 'zoomIn') viewer.zoomIn();
+      else if (name === 'zoomOut') viewer.zoomOut();
+      else if (name === 'fitWidth') viewer.fitWidth();
+      else if (name === 'fitPage') viewer.fitPage();
+      else if (name === 'selectAll') {
+        // Select the whole text layer (docx/pptx); canvas-based xlsx selection has no DOM text.
+        try {
+          const sel = window.getSelection();
+          const range = document.createRange();
+          range.selectNodeContents(container);
+          sel.removeAllRanges();
+          sel.addRange(range);
+          log('selectAll: ' + sel.toString().length + ' chars now selected');
+        } catch (e) { log('selectAll failed: ' + ((e && e.message) || e)); }
+      }
+      else if (name === 'copySelection') {
+        if (format === 'xlsx' && viewer.copySelection) {
+          Promise.resolve(viewer.copySelection()).then(r => {
+            const text = (r && (r.text ?? r.tsv ?? r.plainText)) || '';
+            log('xlsx copy: ' + String(text).length + ' chars');
+            bridge.onCopyResult(String(text));
+          }, e => log('copySelection failed: ' + ((e && e.message) || e)));
+        } else {
+          const selText = String(window.getSelection() || '');
+          log('copy: ' + selText.length + ' chars');
+          bridge.onCopyResult(selText);
+        }
+      }
+      else if (cmd && cmd.goTo !== undefined && viewer.scrollToPage) {
+        Promise.resolve(viewer.scrollToPage(cmd.goTo)).then(
+          () => bridge.onPageChanged(viewer.topVisiblePage + 1),
+          e => log('goTo failed: ' + ((e && e.message) || e))
+        );
+      }
+    } catch (e) { log('dispatch threw: ' + ((e && e.message) || e)); }
+  };
+
+  // Pinch-to-zoom: the lib's only built-in interactive zoom is ctrl+wheel
+  // (desktop). Detect two-finger pinches and drive viewer.setScale(), which
+  // re-renders crisply instead of CSS-scaling the page.
+  let pinch = null;
+  const touchDist = (e) => Math.hypot(
+    e.touches[0].clientX - e.touches[1].clientX,
+    e.touches[0].clientY - e.touches[1].clientY
+  );
+  container.addEventListener('touchstart', e => {
+    if (e.touches.length === 2 && viewer) pinch = { dist: touchDist(e), scale: viewer.getScale() };
+  }, { passive: true });
+  container.addEventListener('touchmove', e => {
+    if (!pinch || e.touches.length !== 2 || !viewer) return;
+    e.preventDefault(); // keep the page from scrolling while zooming
+    const factor = touchDist(e) / pinch.dist;
+    // Anchor the zoom at the finger midpoint. The lib consumes the same
+    // _pendingZoomAnchor field its ctrl+wheel path sets before calling
+    // setScale; if a future version renames it, zoom falls back to centered.
+    try {
+      const rect = container.getBoundingClientRect();
+      viewer._pendingZoomAnchor = {
+        x: (e.touches[0].clientX + e.touches[1].clientX) / 2 - rect.left,
+        y: (e.touches[0].clientY + e.touches[1].clientY) / 2 - rect.top,
+      };
+    } catch (err) { /* anchor is best-effort */ }
+    viewer.setScale(Math.min(6, Math.max(0.25, pinch.scale * factor)));
+  }, { passive: false });
+  const endPinch = e => { if (e.touches.length < 2) pinch = null; };
+  container.addEventListener('touchend', endPinch);
+  container.addEventListener('touchcancel', endPinch);
+
+  const columnOptions = (onVisible) => ({
+    background: '#E9E9E9',
+    pageShadow: '0 1px 4px rgba(0,0,0,0.35)',
+    gap: 12,
+    paddingTop: 12,
+    paddingBottom: 12,
+    // Native DOM text layer: long-press selects, selectionchange reports to Kotlin.
+    enableTextSelection: true,
+    onSelectionContextChange: () => {},
+    onVisiblePageChange: onVisible,
+    onVisibleSlideChange: onVisible,
+  });
+
+  // Report DOM text selection to Kotlin (debounced; '' clears).
+  let selectionTimer = null;
+  document.addEventListener('selectionchange', () => {
+    clearTimeout(selectionTimer);
+    selectionTimer = setTimeout(() => {
+      try { bridge.onSelectionChanged(String(window.getSelection() || '')); } catch (e) {}
+    }, 200);
+  });
+
+  async function start() {
+    if (format === 'docx') {
+      const { DocxScrollViewer } = await import('./ooxml/docx.mjs');
+      viewer = new DocxScrollViewer(container, columnOptions(top => bridge.onPageChanged(top + 1)));
+      await viewer.load(documentUrl);
+      log('docx loaded, pages=' + viewer.pageCount);
+      bridge.onLoadSuccess(format, viewer.pageCount, viewer.topVisiblePage + 1);
+    } else if (format === 'xlsx') {
+      const { XlsxViewer } = await import('./ooxml/xlsx.mjs');
+      viewer = new XlsxViewer(container);
+      await viewer.load(documentUrl);
+      log('xlsx loaded, sheets=' + viewer.sheetCount);
+      bridge.onLoadSuccess(format, viewer.sheetCount, viewer.sheetIndex + 1);
+    } else if (format === 'pptx') {
+      const { PptxScrollViewer } = await import('./ooxml/pptx.mjs');
+      viewer = new PptxScrollViewer(container, columnOptions(top => bridge.onPageChanged(top + 1)));
+      await viewer.load(documentUrl);
+      log('pptx loaded, slides=' + viewer.slideCount);
+      bridge.onLoadSuccess(format, viewer.slideCount, 1);
+    } else {
+      bridge.onLoadError('Unsupported format: ' + format);
+    }
+  }
+
+  start().catch(e => bridge.onLoadError(String((e && e.message) || e)));
+</script>
+</body>
+</html>

@@ -1,0 +1,26 @@
+-- Merging decision tree log ---
+manifest
+ADDED from /Users/shibinreshma/AndroidStudioProjects/Viewly/viewer/src/main/AndroidManifest.xml:2:1-9:12
+INJECTED from /Users/shibinreshma/AndroidStudioProjects/Viewly/viewer/src/main/AndroidManifest.xml:2:1-9:12
+	package
+		INJECTED from /Users/shibinreshma/AndroidStudioProjects/Viewly/viewer/src/main/AndroidManifest.xml
+	xmlns:android
+		ADDED from /Users/shibinreshma/AndroidStudioProjects/Viewly/viewer/src/main/AndroidManifest.xml:2:11-69
+application
+ADDED from /Users/shibinreshma/AndroidStudioProjects/Viewly/viewer/src/main/AndroidManifest.xml:3:5-8:19
+activity#com.fauran.fileviewer.viewer.OfficeViewerActivity
+ADDED from /Users/shibinreshma/AndroidStudioProjects/Viewly/viewer/src/main/AndroidManifest.xml:4:9-7:116
+	android:exported
+		ADDED from /Users/shibinreshma/AndroidStudioProjects/Viewly/viewer/src/main/AndroidManifest.xml:6:13-37
+	android:configChanges
+		ADDED from /Users/shibinreshma/AndroidStudioProjects/Viewly/viewer/src/main/AndroidManifest.xml:7:13-113
+	android:name
+		ADDED from /Users/shibinreshma/AndroidStudioProjects/Viewly/viewer/src/main/AndroidManifest.xml:5:13-49
+uses-sdk
+INJECTED from /Users/shibinreshma/AndroidStudioProjects/Viewly/viewer/src/main/AndroidManifest.xml reason: use-sdk injection requested
+INJECTED from /Users/shibinreshma/AndroidStudioProjects/Viewly/viewer/src/main/AndroidManifest.xml
+INJECTED from /Users/shibinreshma/AndroidStudioProjects/Viewly/viewer/src/main/AndroidManifest.xml
+	android:targetSdkVersion
+		INJECTED from /Users/shibinreshma/AndroidStudioProjects/Viewly/viewer/src/main/AndroidManifest.xml
+	android:minSdkVersion
+		INJECTED from /Users/shibinreshma/AndroidStudioProjects/Viewly/viewer/src/main/AndroidManifest.xml

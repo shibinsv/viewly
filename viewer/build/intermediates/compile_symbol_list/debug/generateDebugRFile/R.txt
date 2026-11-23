@@ -1,0 +1,6 @@
+int id action_copy 0x0
+int id action_select_all 0x0
+int menu viewer_selection 0x0
+int string viewer_action_copy 0x0
+int string viewer_action_select_all 0x0
+int xml file_paths 0x0

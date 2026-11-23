@@ -1,0 +1,8 @@
+R_DEF: Internal format may change without notice
+local
+id action_copy
+id action_select_all
+menu viewer_selection
+string viewer_action_copy
+string viewer_action_select_all
+xml file_paths
